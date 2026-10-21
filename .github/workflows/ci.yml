@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: shellcheck
+        run: shellcheck -S warning leclite.sh install.sh tests/smoke.sh
+
+      - name: bash syntax
+        run: for f in leclite.sh install.sh tests/smoke.sh; do bash -n "$f"; done
+
+      # smoke 里的 dry-run 用例需要 root（脚本本身要求），用 sudo 跑
+      - name: smoke (args / exit codes)
+        run: sudo bash tests/smoke.sh
+
+  real-run:
+    # 在真正的 Ubuntu 上跑只读路径：自检、参数解析、dry-run 不落地
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      # git 仓库可能没记下可执行位（Windows 上提交的常见坑）
+      - name: 决定可执行位
+        run: |
+          chmod +x leclite.sh install.sh tests/smoke.sh
+          ls -l leclite.sh
+          git ls-files -s leclite.sh
+
+      - name: version / help
+        run: |
+          bash ./leclite.sh --version
+          bash ./leclite.sh --help | sed -n '1,5p'
+
+      - name: info (read-only)
+        run: sudo bash ./leclite.sh info
+
+      - name: dry-run mirror switch (no system change)
+        run: sudo bash ./leclite.sh --dry-run --yes apt tsinghua
+
+      - name: dry-run tools
+        run: sudo bash ./leclite.sh --dry-run --yes tools
+
+      - name: doctor (read-only)
+        run: |
+          sudo bash ./leclite.sh doctor || true
+          echo "--- 二次运行确认幂等 ---"
+          sudo bash ./leclite.sh doctor || true
+
+      - name: 断言 dry-run 没落地
+        run: |
+          set -e
+          # 1) 仓库文件不能被改
+          git diff --exit-code
+          # 2) dry-run 不能创建快照目录
+          if compgen -G "/var/backups/leclite/*/manifest" >/dev/null; then
+            echo "FAIL: dry-run 竟然写了快照"; exit 1
+          fi
+          echo "OK: dry-run 全部未落地"

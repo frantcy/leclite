@@ -1,0 +1,7 @@
+*.bak
+*.bak.*
+*.swp
+.DS_Store
+leclite.log
+debug.log
+SHA256SUMS.bak
